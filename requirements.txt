@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+google-genai
+mcp
+pytest
+beautifulsoup4
+websockets
+python-dotenv

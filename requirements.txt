@@ -1,8 +1,10 @@
 fastapi
 uvicorn[standard]
-google-genai
-mcp
-pytest
-beautifulsoup4
-websockets
+groq
+openai
+httpx
 python-dotenv
+beautifulsoup4
+mcp
+websockets
+anyio

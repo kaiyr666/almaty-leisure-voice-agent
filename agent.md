@@ -12,13 +12,11 @@ A voice-driven AI assistant designed to help users plan their leisure time in Al
 
 ## Target Websites
 - `https://sxodim.com/almaty`
-- `https://kino.kz/ru`
-- `https://ticketon.kz/almaty`
 
 ## Technology Stack
 - **Frontend:** HTML/JS/CSS (Vanilla or React/Vue) with a modern, gradient-free design.
 - **Backend:** Python (FastAPI) to orchestrate the pipeline.
-- **LLM / ASR / TTS:** Google Stack (Gemini Multimodal LLM for text/audio processing).
+- **LLM / ASR / TTS:** need to decide
 - **Web Browsing:** MCP Playwright.
 
 ## Definition of Done

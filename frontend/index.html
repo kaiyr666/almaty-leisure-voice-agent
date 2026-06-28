@@ -1,33 +1,62 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Voice AI Assistant</title>
+    <title>Голосовой Помощник Almaty Leisure</title>
+    <!-- Modern Premium Typography -->
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/style.css">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
 </head>
 <body>
-    <div class="app-container">
+    <div class="glass-container">
         <header>
-            <h1>AI Assistant</h1>
-            <p>Your Leisure Planning Companion</p>
+            <div class="logo-area">
+                <span class="logo-dot"></span>
+                <h1>Almaty Leisure</h1>
+            </div>
+            <p class="subtitle">Твой интеллектуальный гид по событиям города</p>
         </header>
 
         <main>
-            <div class="assistant-visualizer" id="visualizer">
-                <div class="orb"></div>
+            <!-- Glow orb visualizer indicating voice assistant state -->
+            <div class="visualizer-container">
+                <div class="orb-outer">
+                    <div class="orb-glow"></div>
+                    <div class="orb" id="orb">
+                        <div class="orb-wave wave1"></div>
+                        <div class="orb-wave wave2"></div>
+                        <div class="orb-wave wave3"></div>
+                    </div>
+                </div>
             </div>
 
-            <div class="status-text" id="status-text">Click the microphone to start</div>
+            <!-- Dynamic state / response text block -->
+            <div class="status-panel">
+                <div class="status-indicator">
+                    <span class="status-pulse" id="status-pulse"></span>
+                    <span class="status-text" id="status-text">Инициализация WebSocket...</span>
+                </div>
+                <div class="transcript-box" id="transcript-box">
+                    <p class="system-msg">Система готова. Нажмите на микрофон ниже, чтобы начать общение.</p>
+                </div>
+            </div>
 
-            <button class="mic-btn" id="mic-btn">
-                <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M12 2C10.3431 2 9 3.34315 9 5V11C9 12.6569 10.3431 14 12 14C13.6569 14 15 12.6569 15 11V5C15 3.34315 13.6569 2 12 2Z" fill="currentColor"/>
-                    <path d="M19 10V11C19 14.866 15.866 18 12 18C8.13401 18 5 14.866 5 11V10H3V11C3 15.5393 6.36214 19.2907 10.7456 19.9079C10.9126 19.932 11 20.0763 11 20.2456V22H13V20.2456C13 20.0763 13.0874 19.932 13.2544 19.9079C17.6379 19.2907 21 15.5393 21 11V10H19Z" fill="currentColor"/>
-                </svg>
-            </button>
+            <!-- Big tactile interactive microphone button -->
+            <div class="controls">
+                <button class="mic-button" id="mic-btn" disabled>
+                    <svg class="mic-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M12 1a4 4 0 0 0-4 4v7a4 4 0 0 0 8 0V5a4 4 0 0 0-4-4z" fill="currentColor"/>
+                        <path d="M19 10v1a7 7 0 0 1-14 0v-1H3v1a9 9 0 0 0 8 8.94V21H9v2h6v-2h-2v-1.06A9 9 0 0 0 21 11v-1h-2z" fill="currentColor"/>
+                    </svg>
+                    <span class="ripple"></span>
+                </button>
+            </div>
         </main>
+
+        <footer>
+            <p>Работает на технологиях Groq Whisper, Llama 3 & ElevenLabs</p>
+        </footer>
     </div>
 
     <script src="/static/app.js"></script>

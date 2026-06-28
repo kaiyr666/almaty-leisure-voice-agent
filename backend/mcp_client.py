@@ -1,35 +1,57 @@
-import asyncio
-from mcp import StdioServerParameters
+import os
+from contextlib import AsyncExitStack
+from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-from mcp.client.session import ClientSession
-import json
+from .logger import get_logger
 
-class MCPPlaywrightClient:
+log = get_logger("mcp")
+
+
+class MCPClient:
     def __init__(self):
-        self.server_params = StdioServerParameters(
-            command="npx",
-            args=["-y", "@modelcontextprotocol/server-playwright"]
-        )
-        self._client_task = None
         self.session = None
+        self._exit_stack = None
 
     async def connect(self):
-        self.read_stream, self.write_stream = await stdio_client(self.server_params).__aenter__()
-        self.session = await ClientSession(self.read_stream, self.write_stream).__aenter__()
-        await self.session.initialize()
-        print("MCP Playwright connected.")
+        log.info("Connecting to Playwright MCP server via 'npx -y @playwright/mcp'...")
+        server_params = StdioServerParameters(
+            command="npx",
+            args=["-y", "@playwright/mcp"],
+            env=os.environ.copy(),
+        )
 
-    async def get_tools(self):
-        if not self.session:
-            await self.connect()
-        response = await self.session.list_tools()
-        return response.tools
+        self._exit_stack = AsyncExitStack()
+        try:
+            read_stream, write_stream = await self._exit_stack.enter_async_context(
+                stdio_client(server_params)
+            )
+            self.session = await self._exit_stack.enter_async_context(
+                ClientSession(read_stream, write_stream)
+            )
+            await self.session.initialize()
+            log.info("MCP Playwright connected and initialized")
+        except Exception as e:
+            log.error("MCP connect failed: %s", e, exc_info=True)
+            await self.close()
+            raise
 
-    async def call_tool(self, name: str, arguments: dict):
+    async def call_tool(self, tool_name: str, arguments: dict):
         if not self.session:
-            await self.connect()
-        print(f"Calling MCP tool {name} with args: {arguments}")
-        result = await self.session.call_tool(name, arguments)
+            log.error("call_tool('%s') called but session is not connected", tool_name)
+            raise RuntimeError("MCP client is not connected.")
+        log.debug("MCP call_tool: '%s', args=%s", tool_name, arguments)
+        result = await self.session.call_tool(tool_name, arguments)
+        content_size = len(result.content[0].text) if result.content else 0
+        log.debug("MCP tool '%s' returned %d chars", tool_name, content_size)
         return result
 
-mcp_client = MCPPlaywrightClient()
+    async def close(self):
+        log.info("Closing MCP Playwright connection...")
+        if self._exit_stack:
+            await self._exit_stack.aclose()
+            self._exit_stack = None
+        self.session = None
+        log.info("MCP Playwright disconnected")
+
+
+mcp_client = MCPClient()

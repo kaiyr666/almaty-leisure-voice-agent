@@ -1,127 +1,219 @@
-import os
 import json
+import array
 import asyncio
-from google import genai
-from google.genai import types
-from dotenv import load_dotenv
+import time
+from starlette.websockets import WebSocketDisconnect
+from .asr import asr_service
+from .llm import llm_service
+from .tts import tts_service
+from .logger import get_logger
 
-from .mcp_client import mcp_client
-from .scraper import get_events_from_sites
+log = get_logger("agent")
 
-load_dotenv()
-
-client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-
-async def search_events_tool(query: str, target_date: str = "today") -> str:
-    """Searches for leisure events in Almaty using MCP Playwright.
-    
-    Args:
-        query: What kind of events to look for (e.g. concert, standup, movie)
-        target_date: The date to search for (e.g. today, tomorrow)
-        
-    Returns:
-        A formatted string of deduplicated events found on the websites.
-    """
-    print(f"Agent requested to search events: query='{query}', date='{target_date}'")
-    # In a fully autonomous setup, we'd give the agent 'navigate' and 'get_dom' directly.
-    # To ensure reliability and speed, we orchestrate the MCP Playwright calls here.
-    events_data = await get_events_from_sites(query, target_date)
-    return events_data
-
-# The declaration for Gemini
-search_events_declaration = types.FunctionDeclaration(
-    name="search_events",
-    description="Searches for leisure events (concerts, movies, standups) in Almaty on afisha websites using MCP Playwright.",
-    parameters={
-        "type": "OBJECT",
-        "properties": {
-            "query": {"type": "STRING", "description": "Type of event (concert, standup, movie, etc)"},
-            "target_date": {"type": "STRING", "description": "Date or time (e.g., today, tonight, this weekend)"}
-        },
-        "required": ["query"]
-    }
+GREETING_TEXT = (
+    "Привет! Я твой голосовой помощник sxodim.com. "
+    "Скажи, что помочь тебе найти в Алматы сегодня вечером или на выходных?"
 )
 
-tool = types.Tool(function_declarations=[search_events_declaration])
+
+def _peak_amplitude(pcm: bytes) -> int:
+    samples = array.array("h")
+    samples.frombytes(pcm[: len(pcm) - (len(pcm) % 2)])
+    return max((abs(s) for s in samples), default=0)
+
+
+async def collect_utterance(client_websocket):
+    """Buffer websocket messages until stop_recording is received.
+    Returns the PCM bytes for the utterance, or None on disconnect."""
+    audio_buffer = bytearray()
+    peak = 0
+    log.debug("Waiting for next user utterance...")
+
+    while True:
+        try:
+            message = await client_websocket.receive()
+        except Exception as e:
+            log.warning("WebSocket receive error: %s", e)
+            return None
+
+        if message.get("type") == "websocket.disconnect":
+            log.info("Client disconnected during utterance collection")
+            return None
+
+        if "bytes" in message:
+            data = message["bytes"]
+            audio_buffer.extend(data)
+            peak = max(peak, _peak_amplitude(data))
+
+        elif "text" in message:
+            try:
+                ctrl = json.loads(message["text"])
+            except Exception as parse_err:
+                log.warning("Control parse error: %s — raw: %s", parse_err, message["text"])
+                continue
+
+            kind = ctrl.get("type")
+            if kind == "start_recording":
+                log.debug("start_recording: clearing audio buffer")
+                audio_buffer = bytearray()
+                peak = 0
+            elif kind == "stop_recording":
+                duration_s = len(audio_buffer) / 2 / 16000
+                log.info(
+                    "stop_recording: %d bytes captured (%.2fs), peak=%d/32767",
+                    len(audio_buffer),
+                    duration_s,
+                    peak,
+                )
+                return bytes(audio_buffer)
+            else:
+                log.debug("Unknown control message type: %s", kind)
+
 
 async def handle_gemini_session(client_websocket):
-    config = types.LiveConnectConfig(
-        response_modalities=[types.LiveConnectResponseModality.AUDIO],
-        tools=[tool],
-        system_instruction=types.Content(parts=[types.Part.from_text(
-            "You are a helpful Voice AI Assistant for Leisure Planning in Almaty. "
-            "You can talk to the user and help them find events (concerts, standups, etc). "
-            "Always use the 'search_events' tool to fetch current events from sxodim.com, kino.kz, or ticketon.kz. "
-            "Keep your responses concise and natural. Speak in Russian."
-        )])
-    )
-    
+    """
+    Main session loop: greeting → [ASR → LLM → TTS] per turn.
+    Maintains per-session conversation history so the LLM can answer
+    follow-up questions without re-searching.
+    """
+    session_id = id(client_websocket)
+    log.info("=== Session started [id=%s] ===", session_id)
+
+    # Conversation history — persists for the full WebSocket session.
+    # Each entry: {"role": "user"|"assistant", "text": "..."}
+    # The LLM receives this on every turn, enabling contextual follow-up.
+    history: list[dict] = []
+    turn_count = 0
+
     try:
-        async with client.aio.live.connect(model="gemini-2.0-flash-exp", config=config) as session:
-            print("Connected to Gemini Live.")
-            
-            # Send initial greeting
-            await session.send(input="Привет! Скажи, что ты можешь помочь найти куда сходить в Алматы.", end_of_turn=True)
-            
-            # Task to receive audio from frontend and send to Gemini
-            async def receive_from_client():
-                while True:
-                    data = await client_websocket.receive_bytes()
-                    # We assume it's PCM 16-bit 16kHz from frontend
-                    await session.send(
-                        input={"mime_type": "audio/pcm;rate=16000", "data": data}
-                    )
-            
-            # Task to receive from Gemini and send to frontend
-            async def receive_from_gemini():
-                async for response in session.receive():
-                    if response.server_content:
-                        model_turn = response.server_content.model_turn
-                        if model_turn:
-                            for part in model_turn.parts:
-                                if part.inline_data:
-                                    # Forward audio PCM to frontend
-                                    # Wait, Gemini returns 24kHz PCM by default!
-                                    await client_websocket.send_bytes(part.inline_data.data)
-                                if part.text:
-                                    # Optional text logging
-                                    print(f"Gemini: {part.text}")
-                        if response.server_content.interrupted:
-                            print("Gemini interrupted.")
-                            
-                    # Handle tool calls
-                    if response.tool_call:
-                        for fc in response.tool_call.function_calls:
-                            if fc.name == "search_events":
-                                args = {k: v for k, v in fc.args.items()}
-                                query = args.get("query", "")
-                                date = args.get("target_date", "today")
-                                
-                                # Let frontend know we are searching
-                                await client_websocket.send_text(json.dumps({
-                                    "type": "status", 
-                                    "message": "Searching web...", 
-                                    "state": "idle"
-                                }))
-                                
-                                result_text = await search_events_tool(query, date)
-                                
-                                # Send result back to Gemini
-                                tool_response = types.LiveClientContent(
-                                    turn_complete=True,
-                                    tool_response=types.ToolResponse(
-                                        function_responses=[
-                                            types.FunctionResponse(
-                                                name=fc.name,
-                                                id=fc.id,
-                                                response={"result": result_text}
-                                            )
-                                        ]
-                                    )
-                                )
-                                await session.send(input=tool_response)
-                                
-            await asyncio.gather(receive_from_client(), receive_from_gemini())
-            
+        # --- Greeting ---
+        log.info("[%s] Sending greeting via TTS", session_id)
+        await client_websocket.send_text(
+            json.dumps({"type": "status", "message": "Speaking...", "state": "speaking"})
+        )
+        await client_websocket.send_text(
+            json.dumps({"type": "transcript", "role": "assistant", "text": GREETING_TEXT})
+        )
+
+        t0 = time.monotonic()
+        async for chunk in tts_service.generate_stream(GREETING_TEXT):
+            await client_websocket.send_bytes(chunk)
+        log.info("[%s] Greeting TTS done in %.2fs", session_id, time.monotonic() - t0)
+
+        history.append({"role": "assistant", "text": GREETING_TEXT})
+
+        await client_websocket.send_text(
+            json.dumps({"type": "status", "message": "Click the microphone to speak", "state": "idle"})
+        )
+
+        # --- Main loop ---
+        while True:
+            turn_count += 1
+            log.info("[%s] === Turn %d — waiting for voice input ===", session_id, turn_count)
+
+            user_pcm = await collect_utterance(client_websocket)
+            if user_pcm is None:
+                log.info("[%s] Session ended after %d turns", session_id, turn_count - 1)
+                break
+
+            if len(user_pcm) < 3200:  # < 100ms of audio
+                log.warning(
+                    "[%s] Audio too short (%d bytes) — skipping turn", session_id, len(user_pcm)
+                )
+                continue
+
+            t_turn = time.monotonic()
+
+            # --- ASR ---
+            await client_websocket.send_text(
+                json.dumps({"type": "status", "message": "Processing speech...", "state": "processing"})
+            )
+
+            log.info("[%s] Turn %d: ASR starting...", session_id, turn_count)
+            t_asr = time.monotonic()
+            user_text = await asr_service.transcribe(user_pcm)
+            log.info(
+                "[%s] Turn %d: ASR done in %.2fs → '%s'",
+                session_id,
+                turn_count,
+                time.monotonic() - t_asr,
+                user_text,
+            )
+
+            if not user_text:
+                log.warning("[%s] ASR returned empty — asking user to retry", session_id)
+                await client_websocket.send_text(
+                    json.dumps({"type": "status", "message": "Не расслышал. Попробуйте снова.", "state": "idle"})
+                )
+                continue
+
+            await client_websocket.send_text(
+                json.dumps({"type": "transcript", "role": "user", "text": user_text})
+            )
+
+            # --- LLM ---
+            log.info(
+                "[%s] Turn %d: LLM starting (history=%d entries)...",
+                session_id,
+                turn_count,
+                len(history),
+            )
+            t_llm = time.monotonic()
+            assistant_text = await llm_service.get_response(user_text, history)
+            log.info(
+                "[%s] Turn %d: LLM done in %.2fs → '%s...'",
+                session_id,
+                turn_count,
+                time.monotonic() - t_llm,
+                assistant_text[:100],
+            )
+
+            # Persist this exchange to history for future follow-up questions
+            history.append({"role": "user", "text": user_text})
+            history.append({"role": "assistant", "text": assistant_text})
+            log.debug("[%s] History now has %d entries", session_id, len(history))
+
+            await client_websocket.send_text(
+                json.dumps({"type": "transcript", "role": "assistant", "text": assistant_text})
+            )
+
+            # --- TTS ---
+            log.info("[%s] Turn %d: TTS starting...", session_id, turn_count)
+            await client_websocket.send_text(
+                json.dumps({"type": "status", "message": "Speaking...", "state": "speaking"})
+            )
+
+            t_tts = time.monotonic()
+            audio_sent = False
+            async for chunk in tts_service.generate_stream(assistant_text):
+                await client_websocket.send_bytes(chunk)
+                audio_sent = True
+            log.info(
+                "[%s] Turn %d: TTS done in %.2fs, audio_sent=%s",
+                session_id,
+                turn_count,
+                time.monotonic() - t_tts,
+                audio_sent,
+            )
+
+            if not audio_sent:
+                log.error("[%s] TTS produced no audio — falling back to text status", session_id)
+                await client_websocket.send_text(
+                    json.dumps({"type": "status", "message": assistant_text, "state": "idle"})
+                )
+
+            log.info(
+                "[%s] Turn %d complete in %.0fms",
+                session_id,
+                turn_count,
+                (time.monotonic() - t_turn) * 1000,
+            )
+
+            await client_websocket.send_text(
+                json.dumps({"type": "status", "message": "Click the microphone to speak", "state": "idle"})
+            )
+
+    except WebSocketDisconnect:
+        log.info("[%s] Client disconnected mid-session (turn %d)", session_id, turn_count)
     except Exception as e:
-        print(f"Gemini Session Error: {e}")
+        log.error("[%s] Fatal session error: %s", session_id, e, exc_info=True)

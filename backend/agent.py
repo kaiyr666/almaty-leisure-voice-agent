@@ -11,8 +11,9 @@ from .logger import get_logger
 log = get_logger("agent")
 
 GREETING_TEXT = (
-    "Привет! Я твой голосовой помощник sxodim.com. "
-    "Скажи, что помочь тебе найти в Алматы сегодня вечером или на выходных?"
+    "Hey there! I'm your AI leisure assistant. "
+    "Tell me what kind of event you're looking for — "
+    "concerts, movies, standups, festivals — and I'll find the best options for you!"
 )
 
 
@@ -143,7 +144,7 @@ async def handle_gemini_session(client_websocket):
             if not user_text:
                 log.warning("[%s] ASR returned empty — asking user to retry", session_id)
                 await client_websocket.send_text(
-                    json.dumps({"type": "status", "message": "Не расслышал. Попробуйте снова.", "state": "idle"})
+                    json.dumps({"type": "status", "message": "Didn't catch that — please try again.", "state": "idle"})
                 )
                 continue
 

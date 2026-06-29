@@ -12,7 +12,7 @@ load_dotenv()
 
 log = get_logger("llm")
 
-# Windows TLS inspection workaround — same issue as TTS (see tts.py)
+# Windows TLS inspection workaround (see tts.py for details)
 _http_client = httpx.Client(verify=False)
 
 
@@ -25,13 +25,21 @@ class GroqLLM:
         self.model = "llama-3.3-70b-versatile"
 
         self.system_instruction = (
-            "You are a helpful Voice AI Assistant for Leisure Planning in Almaty. "
-            "You help users find events: concerts, standups, movies, etc. "
-            "Use the 'search_events' tool ONLY when the user asks about NEW events or a NEW search. "
-            "If the user asks follow-up questions about events already found "
-            "(e.g. 'tell me more', 'what was the first one', 'give me details'), "
-            "answer from the conversation history — do NOT call search_events again. "
-            "Keep your responses concise and natural. Speak in Russian."
+            "You are an enthusiastic and knowledgeable Voice AI Assistant for Leisure and Event Planning. "
+            "Your job is to help users discover exciting things to do — concerts, movies, standups, exhibitions, "
+            "sports events, festivals, and more.\n\n"
+            "When presenting events, always be detailed and engaging:\n"
+            "- Give the full event name\n"
+            "- Describe what kind of event it is and why it might be interesting\n"
+            "- Mention the venue or location if available\n"
+            "- Include date, time, or price details if the search results contain them\n"
+            "- End with a helpful suggestion (e.g. which event suits a particular mood or group)\n\n"
+            "Use the 'search_events' tool ONLY when the user asks about new events or a new search. "
+            "For follow-up questions about events already found (e.g. 'tell me more about the first one', "
+            "'which one is cheapest', 'what's the venue for number two'), "
+            "answer directly from conversation history — do NOT call search_events again.\n\n"
+            "Keep your tone friendly, conversational, and enthusiastic — your responses will be spoken aloud. "
+            "Speak in English."
         )
 
         self.tools = [
@@ -40,19 +48,19 @@ class GroqLLM:
                 "function": {
                     "name": "search_events",
                     "description": (
-                        "Searches for leisure events (concerts, movies, standups) in Almaty "
-                        "on sxodim.com using MCP Playwright."
+                        "Searches for leisure events (concerts, movies, standups, exhibitions, sports) "
+                        "on the configured events website using MCP Playwright."
                     ),
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "query": {
                                 "type": "string",
-                                "description": "Type of event (concert, standup, movie, etc)",
+                                "description": "Type of event to search for (e.g. concert, standup, movie, festival)",
                             },
                             "target_date": {
                                 "type": "string",
-                                "description": "Date or time (e.g., today, tonight, this weekend)",
+                                "description": "When the user wants to go (e.g. today, tonight, this weekend, tomorrow)",
                             },
                         },
                         "required": ["query"],
@@ -63,12 +71,6 @@ class GroqLLM:
         log.info("GroqLLM initialized with model=%s", self.model)
 
     async def get_response(self, user_message: str, history: list[dict]) -> str:
-        """
-        Sends user message + full conversation history to Llama on Groq.
-        Handles tool calls (event search) and returns the final assistant text.
-        The caller is responsible for appending this exchange to history.
-        """
-        # Build message list: system + all previous turns + new user message
         messages = [{"role": "system", "content": self.system_instruction}]
         for turn in history:
             messages.append({"role": turn["role"], "content": turn["text"]})
@@ -76,9 +78,7 @@ class GroqLLM:
 
         log.info(
             "LLM request: user='%s...', history_turns=%d, total_messages=%d",
-            user_message[:80],
-            len(history),
-            len(messages),
+            user_message[:80], len(history), len(messages),
         )
 
         loop = asyncio.get_running_loop()
@@ -107,7 +107,6 @@ class GroqLLM:
             )
 
             if tool_calls:
-                # Append the assistant's tool-call message to enable the second call
                 messages.append(response_message)
 
                 for tool_call in tool_calls:
@@ -116,28 +115,21 @@ class GroqLLM:
                         query = args.get("query", "")
                         target_date = args.get("target_date", "today")
 
-                        log.info(
-                            "LLM: executing search_events(query='%s', date='%s')",
-                            query,
-                            target_date,
-                        )
+                        log.info("LLM: executing search_events(query='%s', date='%s')", query, target_date)
                         t_search = time.monotonic()
                         result = await get_events_from_sites(query, target_date)
                         log.info(
                             "LLM: search_events returned %d chars in %.2fs",
-                            len(result),
-                            time.monotonic() - t_search,
+                            len(result), time.monotonic() - t_search,
                         )
                         log.debug("LLM: search_events result:\n%s", result)
 
-                        messages.append(
-                            {
-                                "role": "tool",
-                                "tool_call_id": tool_call.id,
-                                "name": "search_events",
-                                "content": result,
-                            }
-                        )
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "name": "search_events",
+                            "content": result,
+                        })
 
                 log.debug("LLM: second call to Groq with tool results...")
                 t1 = time.monotonic()
@@ -150,23 +142,21 @@ class GroqLLM:
                 )
                 final_text = second_response.choices[0].message.content
                 log.info(
-                    "LLM: final response in %.2fs (tool path): '%s...'",
-                    time.monotonic() - t1,
-                    final_text[:150],
+                    "LLM: final response (%.2fs, tool path): '%s...'",
+                    time.monotonic() - t1, final_text[:150],
                 )
                 return final_text
             else:
                 final_text = response_message.content
                 log.info(
-                    "LLM: direct response in %.2fs (no tool): '%s...'",
-                    elapsed,
-                    final_text[:150],
+                    "LLM: direct response (%.2fs, no tool): '%s...'",
+                    elapsed, final_text[:150],
                 )
                 return final_text
 
         except Exception as e:
             log.error("LLM: request failed: %s", e, exc_info=True)
-            return "Извините, возникла ошибка при обработке запроса."
+            return "Sorry, I ran into an error while processing your request. Please try again."
 
 
 llm_service = GroqLLM()

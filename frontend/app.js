@@ -26,7 +26,7 @@ function initWebSocket() {
 
     socket.onopen = () => {
         console.log('WebSocket connected');
-        setStatus('Подключено. Нажмите на микрофон', 'idle');
+        setStatus('Connected. Press the microphone to speak', 'idle');
         micBtn.disabled = false;
     };
 
@@ -52,7 +52,7 @@ function initWebSocket() {
 
     socket.onclose = () => {
         console.log('WebSocket disconnected.');
-        setStatus('Соединение разорвано. Переподключение...', 'idle');
+        setStatus('Disconnected. Reconnecting...', 'idle');
         micBtn.disabled = true;
         if (isRecording) {
             stopRecording();
@@ -92,7 +92,7 @@ function addMessageToBox(role, text) {
     const p = document.createElement('p');
     p.className = role === 'user' ? 'user-msg' : 'bot-msg';
     
-    const prefix = role === 'user' ? 'Вы: ' : 'Помощник: ';
+    const prefix = role === 'user' ? 'You: ' : 'Assistant: ';
     p.textContent = `${prefix}${text}`;
     
     transcriptBox.appendChild(p);
@@ -129,7 +129,7 @@ async function startRecording() {
 
         isRecording = true;
         micBtn.classList.add('active');
-        setStatus('Слушаю...', 'listening');
+        setStatus('Listening...', 'listening');
         
         // Notify server that user started recording
         if (socket && socket.readyState === WebSocket.OPEN) {
@@ -137,7 +137,7 @@ async function startRecording() {
         }
     } catch (err) {
         console.error('Error accessing microphone:', err);
-        setStatus('Микрофон недоступен', 'idle');
+        setStatus('Microphone unavailable', 'idle');
     }
 }
 
@@ -158,7 +158,7 @@ function stopRecording() {
         audioContext = null;
     }
 
-    setStatus('Обработка...', 'idle');
+    setStatus('Processing...', 'processing');
     
     // Notify server that user stopped recording
     if (socket && socket.readyState === WebSocket.OPEN) {
@@ -168,7 +168,7 @@ function stopRecording() {
 
 micBtn.addEventListener('click', () => {
     if (!socket || socket.readyState !== WebSocket.OPEN) {
-        alert("WebSocket не подключен. Пожалуйста, подождите.");
+        alert("WebSocket not connected. Please wait.");
         return;
     }
 
@@ -219,7 +219,7 @@ async function playAudioData(arrayBuffer) {
 async function playNextInQueue() {
     if (audioQueue.length === 0) {
         isPlaying = false;
-        setStatus('Нажмите на микрофон', 'idle');
+        setStatus('Click the microphone to speak', 'idle');
         return;
     }
 
@@ -237,7 +237,7 @@ async function playNextInQueue() {
     }
 
     isPlaying = true;
-    setStatus('Говорю...', 'speaking');
+    setStatus('Speaking...', 'speaking');
 
     const buffer = audioQueue.shift();
     const source = playContext.createBufferSource();

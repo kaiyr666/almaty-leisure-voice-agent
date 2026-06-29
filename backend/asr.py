@@ -11,7 +11,7 @@ load_dotenv()
 
 log = get_logger("asr")
 
-# Windows TLS inspection workaround — same issue as TTS (see tts.py)
+# Windows TLS inspection workaround (see tts.py for details)
 _http_client = httpx.Client(verify=False)
 
 
@@ -27,7 +27,6 @@ class GroqASR:
     def _pcm_to_wav(
         self, pcm_bytes: bytes, sample_rate: int = 16000, channels: int = 1, sampwidth: int = 2
     ) -> bytes:
-        """Converts raw headerless PCM bytes to WAV format in memory."""
         wav_io = io.BytesIO()
         with wave.open(wav_io, "wb") as wav_file:
             wav_file.setnchannels(channels)
@@ -37,7 +36,6 @@ class GroqASR:
         return wav_io.getvalue()
 
     async def transcribe(self, pcm_bytes: bytes) -> str:
-        """Transcribes raw 16kHz mono PCM bytes using Groq Whisper."""
         if not pcm_bytes:
             log.warning("transcribe() called with empty PCM bytes")
             return ""
@@ -57,7 +55,7 @@ class GroqASR:
                 lambda: self.client.audio.transcriptions.create(
                     file=audio_file,
                     model=self.model,
-                    language="ru",
+                    language="en",
                     response_format="json",
                 ),
             )

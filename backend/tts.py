@@ -8,8 +8,7 @@ load_dotenv()
 
 log = get_logger("tts")
 
-# Windows with TLS inspection (antivirus/proxy) causes CERTIFICATE_VERIFY_FAILED.
-# verify=False is intentional for this development environment when calling known APIs.
+# Windows TLS inspection workaround — verify=False is intentional for this dev environment
 _http_client = httpx.AsyncClient(verify=False)
 
 
@@ -20,17 +19,13 @@ class OpenAITTS:
             http_client=_http_client,
         )
         self.model = "tts-1"
-        # "nova" is clear, friendly, and works well for Russian text
         self.voice = "nova"
         log.info("OpenAITTS initialized: model=%s, voice=%s", self.model, self.voice)
         if not os.environ.get("OPENAI_API_KEY"):
             log.error("OPENAI_API_KEY is not set — TTS will not function")
 
     async def generate_stream(self, text: str):
-        """
-        Streams raw 24kHz 16-bit mono PCM from OpenAI TTS.
-        Output format matches the frontend AudioContext (sampleRate: 24000).
-        """
+        """Streams raw 24kHz 16-bit mono PCM from OpenAI TTS."""
         if not os.environ.get("OPENAI_API_KEY"):
             log.error("TTS: skipping — OPENAI_API_KEY not configured")
             return
@@ -39,7 +34,6 @@ class OpenAITTS:
 
         try:
             total_bytes = 0
-            # response_format="pcm" → raw 24kHz 16-bit LE mono PCM, no header
             async with self.client.audio.speech.with_streaming_response.create(
                 model=self.model,
                 voice=self.voice,
